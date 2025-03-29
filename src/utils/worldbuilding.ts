@@ -1,0 +1,3 @@
+export const worldDescription = "The year is 2125, the world is not only more insular, countries are insular. States have become neighborhoods. Rules are determined by each neighborhood. Trans-neighborhood travel is often banned and trans-global travel can only happen the through deals brokered across multiple territories and with the backing of the few tech companies that can provide air travel. Yet, through it all, the neighborhood of Helix has built a community of openness and trust. Its citizens know each other, socialize with each other, and are happy."
+
+export const totalCharacters = 10;
