@@ -9,6 +9,11 @@ const client = new OpenAI({
 
 const model = "mistral";
 
+export interface Message {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
 export const getRandomAge = (min: number, max: number) => {
   if (min > max) {
     throw new Error("Minimum age cannot be greater than maximum age.");
@@ -225,61 +230,80 @@ export const giveCharacterCrimeMemory = async (
 };
 
 export const chatWithCharacter = async (
+  controller: ReadableStreamDefaultController,
   characterDetails: Character,
   memories: string,
   crime: string,
-  userInput: string
+  messages: Message[]
 ) => {
+  // Create a copy of the messages array to avoid mutating the original
+  const updatedMessages = [...messages];
+
+  // Add system message to the beginning
+  updatedMessages.unshift({
+    role: "system",
+    content: `You are aware of the crime: ${crime} You are ${
+      characterDetails.characterName
+    }. You are ${characterDetails.age} years old. You are ${
+      characterDetails.gender
+    }. You are NOT an investigator in the crime unless your backstory says you are. You are answering questions about the crime. This is your backstory: ${
+      characterDetails.backstory
+    }. You live in this world: ${worldDescription}. ${
+      memories.length > 0
+        ? `You remember the following: ${memories}`
+        : `You don't have memories of this specific question and should respond with something that indicates you don't know.`
+    }. Please respond to the user and NEVER break character. Do not add anything that is not a response in character and do not ever admit to being an AI. If you don't know the answer to a user input say you don't know. Do not make up new character names that are not part of your memory or the crime.`,
+  });
+
+  // For debugging
+  console.log(
+    "Messages being sent to OpenAI:",
+    JSON.stringify(updatedMessages)
+  );
+
+  const completion = await client.chat.completions.create({
+    model: model,
+    messages: updatedMessages,
+    stream: true,
+  });
+
+  // Process the streaming response
+  for await (const chunk of completion) {
+    const content = chunk.choices[0]?.delta?.content || "";
+    if (content) {
+      // Send the chunk as a Server-Sent Event
+      const data = `data: ${JSON.stringify({ content })}\n\n`;
+      controller.enqueue(new TextEncoder().encode(data));
+    }
+  }
+
+  // Send an event to indicate the stream is complete
+  controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+};
+
+export const verifyMotive = async (motive: string, crimeMotive: string) => {
   const completion = await client.chat.completions.create({
     model: model,
     messages: [
       {
         role: "system",
-        content: `You are aware of the crime: ${crime} You are ${
-          characterDetails.characterName
-        }. You are ${characterDetails.age} years old. You are ${
-          characterDetails.gender
-        }. You are NOT an investigator in the crime unless your backstory says you are. You are answering questions about the crime. This is your backstory: ${
-          characterDetails.backstory
-        }. You live in this world: ${worldDescription}. ${
-          memories.length > 0
-            ? `You remember the following: ${memories}`
-            : `You don't have memories of this specific question and should respond with something that indicates you don't know.`
-        }. Please respond to the user and NEVER break character. Do not add anything that is not a response in character and do not ever admit to being an AI. If you don't know the answer to a user input say you don't know. Do not make up new character names that are not part of your memory or the crime.`,
+        content: `Please only provide a score from 0 - 1 where 1 is the highest perfect possible result. You are scoring based on how accurate the user player's motive is compared to provided motive. Do not include a preamble or extra text. Just the floating point number.
+            
+            A 1 is a perfect score. This should only be applied if the motive provided by the user is a perfect match to the correct motive However, that is very unlikely. So you should compare the user's intent and understanding of the motive rather than a word for word comparison.
+
+            EXAMPLE MOTIVE: Jealousy fueld by need for control.
+
+            EXAMPLE HIGH RATING MOTIVE BY USER: She was jealous and wanted control for herself.
+
+            EXAMPLE LOW RATING MOTIVE BY USER: She was in love with Ben but he didn't want her.
+            `,
       },
       {
         role: "user",
-        content: userInput,
+        content: `Please rate the motive I have discovered, ${motive}, with the actual motive, ${crimeMotive}, and provide a score from 0 to 1 based on how close my motive matches up with the crime motive. 1 is the best score.`,
       },
     ],
   });
 
   return completion.choices[0].message.content;
 };
-
-export const verifyMotive = async (motive: string, crime: string) => {
-    const completion = await client.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: "system",
-            content: `Please only provide a score from 0 - 1 where 1 is the highest perfect possible result. You are scoring based on how accurate the user player's motive is compared to the details of the crime. Do not include a preamble or extra text. Just the floating point number.
-            
-            A 1 is a perfect score. This should only be applied if the motive provided by the user is a perfect match to the crime.
-
-            EXAMPLE CRIME: Ben was found murdered in his apartment by Laura who had been his business partner for years but grew jealous of the control he was exerting over the business and killed him.
-
-            EXAMPLE HIGH RATING MOTIVE BY USER: She was jealous and wanted control for herself.
-
-            EXAMPLE LOW RATING MOTIVE BY USER: She was in love with Ben but he didn't want her.
-            `,
-          },
-          {
-            role: "user",
-            content: `Please rate the motive I have discovered, ${motive}, with the actual crime, ${crime}, and provide a score from 0 to 1 based on how close my motive matches up with the description of the crime. 1 is the best score.`,
-          },
-        ],
-      });
-    
-      return completion.choices[0].message.content;
-}

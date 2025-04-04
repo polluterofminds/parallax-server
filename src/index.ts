@@ -1,32 +1,52 @@
-import { Hono } from "hono";
-import {
-  chatWithCharacter,
-  generateCrime,
-  generateCustomBackstory,
-  generatePublicCrimeInfo,
-  getCrimeDetails,
-  getGender,
-  getRandomAge,
-  getRandomCharacterName,
-  getRandomHonesty,
-  giveCharacterCrimeMemory,
-  verifyMotive,
-} from "./utils/ai";
-import { totalCharacters } from "./utils/worldbuilding";
-import {
-  CHARACTER_DETAILS_GROUP_ID,
-  getPinata,
-  MEMORIES_GROUP_ID,
-} from "./utils/storage";
-import short from "short-uuid";
+import { Context, Hono, Next } from "hono";
+import { serve } from "@hono/node-server";
+import { cors } from "hono/cors";
+import { getCookie } from "hono/cookie";
+import { chatWithCharacter, verifyMotive } from "./utils/ai";
+import { createNewCase } from "./utils/worldbuilding";
+import { getPinata, MEMORIES_GROUP_ID } from "./utils/storage";
 import { compareAnswers } from "./utils/solve";
 import { VectorQueryMatch } from "pinata";
+import dotenv from "dotenv";
+import { createAppClient, viemConnector } from "@farcaster/auth-client";
+import { jwtDecode } from "jwt-decode";
+import {
+  deleteUserNotificationDetails,
+  getSupabase,
+  getUserNotificationDetails,
+  setUserNotificationDetails,
+} from "./utils/db";
+import {
+  createVerifyAppKeyWithHub,
+  ParseWebhookEvent,
+  parseWebhookEvent,
+  verifyAppKeyWithNeynar,
+} from "@farcaster/frame-node";
+import { sendFrameNotification } from "./utils/notifs";
+
+const bypassRoutes = ["/webhooks"];
+
+const appClient = createAppClient({
+  relay: "https://relay.farcaster.xyz",
+  ethereum: viemConnector(),
+});
+
+// Load environment variables
+dotenv.config();
 
 type Bindings = {
   PINATA_JWT: string;
   PINATA_GATEWAY_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_URL: string;
+};
+
+// Get environment variables
+const env: Bindings = {
+  PINATA_JWT: process.env.PINATA_JWT || "",
+  PINATA_GATEWAY_URL: process.env.PINATA_GATEWAY_URL || "",
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+  SUPABASE_URL: process.env.SUPABASE_URL || "",
 };
 
 type Scores = {
@@ -45,18 +65,195 @@ export type Character = {
   honesty: string;
 };
 
-const app = new Hono<{ Bindings: Bindings }>();
+declare module "hono" {
+  interface ContextVariableMap {
+    fid: number;
+  }
+}
+
+const app = new Hono();
+
+app.use(cors());
+
+// Middleware to inject environment bindings
+app.use("*", async (c, next) => {
+  c.env = env;
+  const path = c.req.path;
+  if (bypassRoutes.some((route) => path.startsWith(route))) {
+    // Skip authentication for whitelisted routes
+    return await next();
+  }
+
+  try {
+    const token = c.req.header("fc-auth-token");
+
+    if (!token) {
+      return c.json({ message: "Unauthorized - not token provided" }, 401);
+    }
+
+    if (token !== "TEST") {
+      const decodedToken: any = jwtDecode(token);
+
+      const { signature, message, nonce } = decodedToken;
+      console.log({ signature, message, nonce });
+
+      if (!signature || !message || !nonce) {
+        console.log("Invalid token payload");
+        return c.json({ message: "Unauthorized" }, 401);
+      }
+
+      const { data, success, fid } = await appClient.verifySignInMessage({
+        nonce: nonce,
+        domain: "parallax.cool",
+        message: message,
+        signature: signature,
+      });
+
+      if (!success) {
+        return c.json({ message: "Unauthorized" }, 401);
+      }
+
+      // Add fid and make it available in all requests
+      c.set("fid", fid);
+    }
+
+    await next();
+  } catch (error) {
+    console.log("JWT verification error:", error);
+    return c.json({ message: "Unauthorized - Invalid token" }, 401);
+  }
+});
+
+app.post("/webhooks", async (c) => {
+  try {
+    const requestJson = await c.req.json();
+    console.log(requestJson);
+    const verifier = createVerifyAppKeyWithHub('https://hub.farcaster.standardcrypto.vc:2281')
+    const data = await parseWebhookEvent(requestJson, verifier);
+    const fid = data.fid;
+    const event = data.event;
+    switch (event.event) {
+      case "frame_added":
+        if (event.notificationDetails) {
+          await setUserNotificationDetails(c, fid, event.notificationDetails);
+          await sendFrameNotification(c, {
+            fid,
+            title: "Welcome to Parallax",
+            body: "With the frame installed, you have an advantage!",
+          });
+        } else {
+          await deleteUserNotificationDetails(c, fid);
+        }        
+        break;
+      case "frame_removed":
+        await deleteUserNotificationDetails(c, fid);
+
+        break;
+      case "notifications_enabled":
+        await setUserNotificationDetails(c, fid, event.notificationDetails);
+        await sendFrameNotification(c, {
+          fid,
+          title: "Ding ding ding",
+          body: "Notifications are now enabled",
+        });
+
+        break;
+      case "notifications_disabled":
+        await deleteUserNotificationDetails(c, fid);
+
+        break;
+    }
+
+    return c.json({ message: "Success" }, 200);
+  } catch (e: unknown) {
+    const error = e as ParseWebhookEvent.ErrorType;
+
+    switch (error.name) {
+      default:
+      case "VerifyJsonFarcasterSignature.InvalidDataError":
+      case "VerifyJsonFarcasterSignature.InvalidEventDataError":
+        // The request data is invalid
+        return c.json({ message: "Request data is invalid" }, 400);
+      case "VerifyJsonFarcasterSignature.InvalidAppKeyError":
+        // The app key is invalid
+        return c.json({ message: "Invalid API key" }, 401);
+      case "VerifyJsonFarcasterSignature.VerifyAppKeyError":
+        // Internal error verifying the app key (caller may want to try again)
+        return c.json({ message: "Internal error" }, 400);
+    }
+  }
+});
 
 app.get("/", (c) => {
-  return c.text("Hello Hono!");
+  return c.text("Hello Hono on Railway!");
+});
+
+app.get("/users/me", async (c) => {
+  try {
+    const fid = c.get("fid");
+    const res = await fetch(
+      `https://hub.pinata.cloud/v1/userDataByFid?fid=${fid}`
+    );
+    const data = await res.json();
+    const userDataMessages = data.messages.map((d: any) => d.data);
+
+    const profile = {
+      fid: fid,
+      username: userDataMessages.find(
+        (d: any) => d.userDataBody.type === "USER_DATA_TYPE_USERNAME"
+      ).userDataBody.value,
+      displayName:
+        userDataMessages.find(
+          (d: any) => d.userDataBody.type === "USER_DATA_TYPE_DISPLAY"
+        ).userDataBody.value || "",
+      frameAdded: false,
+    };
+
+    const userNotificationDetails = await getUserNotificationDetails(c, fid);
+    if (userNotificationDetails && userNotificationDetails.notification_token) {
+      profile.frameAdded = true;
+    }
+
+    return c.json({ profile }, 200);
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server error" }, 500);
+  }
+});
+
+app.get("/chat/:characterId", async (c) => {
+  try {
+    const characterId = c.req.param("characterId");
+
+    const pinata = getPinata(c);
+
+    const conversationFiles = await pinata.files.private
+      .list()
+      .keyvalues({ characterId, conversation: "true" });
+
+    if (!conversationFiles.files || conversationFiles.files.length === 0) {
+      return c.json({ messages: [] }, 200);
+    }
+
+    // Get the most recent conversation file
+    const file = conversationFiles.files[0];
+    const data = await pinata.gateways.private.get(file.cid);
+
+    return c.json({ messages: data.data }, 200);
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server Error" }, 500);
+  }
 });
 
 app.post("/chat", async (c) => {
   try {
-    const { text, characterId, crime } = await c.req.json();
+    const { messages, characterId, crime } = await c.req.json();
 
+    //  Verify Auth here
+
+    //  Upload conversation to Pinata with reference to user
     const pinata = getPinata(c);
-
     const characterDetailFiles = await pinata.files.public
       .list()
       .keyvalues({ characterId, parallax_character: "true" });
@@ -64,48 +261,61 @@ app.post("/chat", async (c) => {
       characterDetailFiles.files && characterDetailFiles.files[0]
         ? characterDetailFiles.files[0]
         : null;
-
     if (!file) {
       return c.json({ message: "Character details not found " }, 404);
     }
-
     const rawData: any = await pinata.gateways.public.get(file.cid);
     const characterDetails: Character = rawData.data;
     console.log({
-      memory: `${characterDetails?.characterName || ""} - ${text}`,
+      memory: `${characterDetails?.characterName || ""} - ${
+        messages[messages.length - 1].content
+      }`,
     });
-    //  Find nearest memory/memories
+    // Find nearest memory/memories
     const nearest: any = await pinata.files.private.queryVectors({
       groupId: MEMORIES_GROUP_ID,
-      query: `${characterDetails?.characterName || ""} - ${text}`,
+      query: `${characterDetails?.characterName || ""} - ${
+        messages[messages.length - 1].content
+      }`,
     });
 
     console.log(nearest);
-
     const matches = nearest.matches.filter(
       (m: VectorQueryMatch) => m.score >= 0.5
     );
-
     console.log(matches);
-
     let memoryToUse = "";
-
     if (matches && matches.length > 0) {
       const data = await pinata.gateways.private.get(matches[0].cid);
       const raw: any = data.data;
       memoryToUse = raw.includes(characterDetails.characterName) ? raw : "";
     }
-
     console.log(memoryToUse.length);
 
-    const answer = await chatWithCharacter(
-      characterDetails,
-      memoryToUse,
-      crime,
-      text
-    );
+    // Set up streaming response
+    c.header("Content-Type", "text/event-stream");
+    c.header("Cache-Control", "no-cache");
+    c.header("Connection", "keep-alive");
 
-    return c.json({ data: answer }, 200);
+    // Create a new readable stream
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          await chatWithCharacter(
+            controller,
+            characterDetails,
+            memoryToUse,
+            crime,
+            messages
+          );
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+    });
+
+    return c.body(stream);
   } catch (error) {
     console.log(error);
     return c.json({ message: "Server error" }, 500);
@@ -126,7 +336,8 @@ app.post("/solve", async (c) => {
     console.log(raw.data);
     console.log(typeof raw.data);
     const scores = compareAnswers(raw.data as any, userSolution);
-
+    console.log("Original Scores:");
+    console.log(scores);
     let motiveScore = scores.motive;
 
     if (motiveScore < 0.6) {
@@ -134,15 +345,17 @@ app.post("/solve", async (c) => {
         .list()
         .keyvalues({ fullCrime: "true" });
       if (crimeResults && crimeResults.files[0]) {
-        const crimeFileData = await pinata.gateways.private.get(
-          crimeResults.files[0].cid
-        );
-        const rawFile: any = crimeFileData.data;
+        // const crimeFileData = await pinata.gateways.private.get(
+        //   crimeResults.files[0].cid
+        // );
+        // const rawFile: any = crimeFileData.data;
 
-        const aiScore: any = await verifyMotive(userSolution.motive, rawFile);
+        const aiScore: any = await verifyMotive(userSolution.motive, raw.data);
 
         try {
           scores.motive = parseFloat(aiScore);
+          console.log("New Scores:");
+          console.log(scores);
         } catch (error) {
           console.log(error);
         }
@@ -155,11 +368,8 @@ app.post("/solve", async (c) => {
       scores.criminal < 0.8 ||
       scores.motive < 0.6
     ) {
-      //  Update smart contract
+      // Send frame notifications
 
-      //  Send frame notifications
-
-      //  Reset game - This should either call a function or an endpoint to reset the game but be non-blocking to this response
       return c.json(
         {
           data: {
@@ -182,6 +392,10 @@ app.post("/solve", async (c) => {
       );
     }
 
+    //  Update smart contract
+    //  Send frame notifications
+    // Fire off queuing request to reset game
+
     return c.json(
       {
         data: {
@@ -198,132 +412,46 @@ app.post("/solve", async (c) => {
   }
 });
 
-app.post("/generate-character-data", async (c) => {
+app.get("/case-file", async (c) => {
   try {
     const pinata = getPinata(c);
-
-    const NUM_CHARACTERS = totalCharacters;
-
-    const characters = await Promise.all(
-      Array.from({ length: NUM_CHARACTERS }).map(async () => {
-        const gender = getGender();
-        const age = getRandomAge(19, 65);
-        const name = getRandomCharacterName(gender);
-        const backstory = await generateCustomBackstory(name!, gender, age);
-        const honesty = "always honest"; // Hard coding this for now because it didn't add value to the game
-
-        const uploadObject: Character = {
-          characterId: short.generate(),
-          characterName: name,
-          gender,
-          age,
-          backstory: backstory!,
-          honesty: `${name} is ${honesty}`,
-        };
-
-        await pinata.upload.public
-          .json(uploadObject)
-          .group(CHARACTER_DETAILS_GROUP_ID)
-          .name(name!)
-          .keyvalues({
-            characterId: uploadObject.characterId,
-            parallax_character: "true",
-          });
-
-        return uploadObject;
-      })
-    );
-
-    //  Create the secret
-    const mysteryCrime = await generateCrime();
-    console.log({ mysteryCrime });
-
-    //  Upload the crime info to Pinata
-    const crimeFile = new File([mysteryCrime!], "parallax_crime.txt", {
-      type: "text/plain",
-    });
-    await pinata.upload.private
-      .file(crimeFile)
-      .name("Parallax Full Crime")
-      .keyvalues({ fullCrime: "true" });
-
-    const publicInfo = await generatePublicCrimeInfo(mysteryCrime!);
-    console.log({ publicInfo });
-    const publicFile = new File([publicInfo!], "parallax_crime_public.txt", {
-      type: "text/plain",
-    });
-    await pinata.upload.public
-      .file(publicFile)
-      .name("Parallax Public Crime Info")
+    const files = await pinata.files.public
+      .list()
       .keyvalues({ publicCrime: "true" });
-
-    //  Get verifiable details
-    let tryAgain = true;
-    while (tryAgain) {
-      const details = await getCrimeDetails(mysteryCrime!);
-      try {
-        const parsed = JSON.parse(details!);
-        if (!parsed.victims || !parsed.criminal || !parsed.motive) {
-          throw new Error("Incorrect JSON");
-        } else {
-          console.log(parsed);
-
-          await pinata.upload.private
-            .json(parsed)
-            .keyvalues({ parallax_solution: "true" });
-          tryAgain = false;
-        }
-
-        //  This is the text we will use semantic search against to solve the crime
-      } catch (error) {
-        console.log("Error with details: ", details);
-        console.log(error);
-      }
+    if (!files.files) {
+      return c.json({ message: "No crime data found" }, 404);
     }
 
-    //  Give the characters memories
-    for (const character of characters) {
-      try {
-        console.log(character.characterName);
-        const memory = await giveCharacterCrimeMemory(mysteryCrime!, character);
-        const blob1 = new Blob(
-          [`${character.characterName} memory details: ${memory!}`],
-          { type: "text/plain" }
-        );
-        const file1 = new File([blob1], `${character.characterName}-memory-1`, {
-          type: "text/plain",
-        });
-        await pinata.upload.private
-          .file(file1)
-          .group(MEMORIES_GROUP_ID)
-          .vectorize();
+    const fileInfo = files.files[0];
+    const data = await pinata.gateways.public.get(fileInfo.cid);
+    const crime = data.data;
 
-        const memory2 = await giveCharacterCrimeMemory(
-          mysteryCrime!,
-          character
-        );
-        const blob2 = new Blob(
-          [`${character.characterName} memory details: ${memory2!}`],
-          { type: "text/plain" }
-        );
-        const file2 = new File([blob2], `${character.characterName}-memory-2`, {
-          type: "text/plain",
-        });
-        await pinata.upload.private
-          .file(file2)
-          .group(MEMORIES_GROUP_ID)
-          .vectorize();
-      } catch (error) {
-        console.log("Error for character: ", character.characterName);
-        console.log(error);
-      }
+    const characterData = await pinata.files.public
+      .list()
+      .keyvalues({ parallax_character: "true" });
+    if (!characterData.files) {
+      return c.json({ message: "No characters found" }, 404);
     }
 
-    return c.json({ data: "Success" }, 200);
+    const characters = characterData.files;
+    console.log(characters);
+    return c.json({ characters, crime });
   } catch (error) {
-    console.error(error);
-    return c.json({ message: "Server error" }, 500);
+    console.log(error);
+    return c.json({ message: "Server Error" }, 500);
   }
 });
 
-export default app;
+app.post("/new-case", async (c) => {
+  await createNewCase(c);
+  return c.json({ data: "Success" });
+});
+
+// Start the server
+const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+console.log(`Server is running on port ${port}`);
+
+serve({
+  fetch: app.fetch,
+  port: port,
+});

@@ -1,19 +1,33 @@
 {
   "name": "parallax",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify"
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@faker-js/faker": "^9.6.0",
+    "@farcaster/auth-client": "^0.3.0",
+    "@farcaster/frame-node": "^0.0.18",
+    "@farcaster/frame-sdk": "^0.0.32",
+    "@hono/node-server": "^1.14.0",
+    "@supabase/supabase-js": "^2.49.4",
+    "dotenv": "^16.4.7",
     "fastest-levenshtein": "^1.0.16",
     "hono": "^4.7.5",
+    "jwt-decode": "^4.0.0",
     "openai": "^4.89.1",
     "pinata": "^2.1.0",
-    "short-uuid": "^5.2.0"
+    "short-uuid": "^5.2.0",
+    "viem": "^2.24.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250214.0",
-    "wrangler": "^4.4.0"
+    "@types/node": "^20.10.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
