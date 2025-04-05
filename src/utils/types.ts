@@ -10,3 +10,8 @@ export type Bindings = {
     CLAUDE_API_KEY: string;
     PRIVATE_KEY: string;
   };
+
+export type FrameNotificationDetails = {
+    url: string;
+    token: string;
+}

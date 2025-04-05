@@ -1,7 +1,3 @@
-import {
-  SendNotificationRequest,
-  sendNotificationResponseSchema,
-} from "@farcaster/frame-sdk";
 import { Context } from "hono";
 import {
   getNotifcationDetailsForAllPlayers,
@@ -59,27 +55,16 @@ export async function sendFrameNotification(
       body,
       targetUrl: appUrl,
       tokens: [notificationDetails.notification_token],
-    } satisfies SendNotificationRequest),
+    }),
   });
 
   const responseJson = await response.json();
 
-  if (response.status === 200) {
-    const responseBody = sendNotificationResponseSchema.safeParse(responseJson);
-    if (responseBody.success === false) {
-      // Malformed response
-      return { state: "error", error: responseBody.error.errors };
-    }
-
-    if (responseBody.data.result.rateLimitedTokens.length) {
-      // Rate limited
-      return { state: "rate_limit" };
-    }
-
+  if (response.status === 200) {    
     return { state: "success" };
   } else {
     // Error response
-    return { state: "error", error: responseJson };
+    return { state: "error", error: "Error sending notification" };
   }
 }
 
@@ -108,23 +93,12 @@ export async function bulkSendFrameNotification(
       body,
       targetUrl: appUrl,
       tokens: tokens,
-    } satisfies SendNotificationRequest),
+    }),
   });
 
   const responseJson = await response.json();
 
-  if (response.status === 200) {
-    const responseBody = sendNotificationResponseSchema.safeParse(responseJson);
-    if (responseBody.success === false) {
-      // Malformed response
-      return { state: "error", error: responseBody.error.errors };
-    }
-
-    if (responseBody.data.result.rateLimitedTokens.length) {
-      // Rate limited
-      return { state: "rate_limit" };
-    }
-
+  if (response.status === 200) {    
     return { state: "success" };
   } else {
     // Error response
