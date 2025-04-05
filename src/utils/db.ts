@@ -63,3 +63,17 @@ export const deleteUserNotificationDetails = async (
     throw error;
   }
 };
+
+export const getNotifcationDetailsForAllPlayers = async (c: Context) => {
+    const supabase = getSupabase(c);
+  let { data: notification_details, error } = await supabase
+    .from("notification_details")
+    .select("*")
+
+    if(error) {
+        console.log(`Supabase error: ${error}`);
+        throw error;
+    }
+
+    return notification_details;
+}

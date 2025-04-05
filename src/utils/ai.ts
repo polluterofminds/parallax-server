@@ -2,12 +2,18 @@ import OpenAI from "openai";
 import { worldDescription } from "./worldbuilding";
 import { faker } from "@faker-js/faker";
 import { Character } from "..";
+import dotenv from "dotenv";
+dotenv.config();
+
 const client = new OpenAI({
-  baseURL: "http://localhost:11434/v1",
-  apiKey: "ollama",
+  // baseURL: "http://localhost:11434/v1",
+  // apiKey: "ollama",
+  baseURL: "https://api.anthropic.com/v1/",
+  apiKey: process.env.CLAUDE_API_KEY,
 });
 
-const model = "mistral";
+const model = "claude-3-5-sonnet-20241022";
+const chatModel = "claude-3-5-haiku-20241022"
 
 export interface Message {
   role: "system" | "user" | "assistant";
@@ -236,49 +242,75 @@ export const chatWithCharacter = async (
   crime: string,
   messages: Message[]
 ) => {
-  // Create a copy of the messages array to avoid mutating the original
-  const updatedMessages = [...messages];
-
-  // Add system message to the beginning
-  updatedMessages.unshift({
-    role: "system",
-    content: `You are aware of the crime: ${crime} You are ${
+  try {
+    // Create a copy of the messages array to avoid mutating the original
+    const updatedMessages = [...messages];
+    // Add system message to the beginning
+    updatedMessages.unshift({
+      role: "system",
+      content: `You are aware of the crime: ${crime} You are ${
       characterDetails.characterName
-    }. You are ${characterDetails.age} years old. You are ${
+      }. You are ${characterDetails.age} years old. You are ${
       characterDetails.gender
-    }. You are NOT an investigator in the crime unless your backstory says you are. You are answering questions about the crime. This is your backstory: ${
+      }. You are NOT an investigator in the crime unless your backstory says you are. You are answering questions about the crime. This is your backstory: ${
       characterDetails.backstory
-    }. You live in this world: ${worldDescription}. ${
+      }. You live in this world: ${worldDescription}. ${
       memories.length > 0
-        ? `You remember the following: ${memories}`
-        : `You don't have memories of this specific question and should respond with something that indicates you don't know.`
-    }. Please respond to the user and NEVER break character. Do not add anything that is not a response in character and do not ever admit to being an AI. If you don't know the answer to a user input say you don't know. Do not make up new character names that are not part of your memory or the crime.`,
-  });
-
-  // For debugging
-  console.log(
-    "Messages being sent to OpenAI:",
-    JSON.stringify(updatedMessages)
-  );
-
-  const completion = await client.chat.completions.create({
-    model: model,
-    messages: updatedMessages,
-    stream: true,
-  });
-
-  // Process the streaming response
-  for await (const chunk of completion) {
-    const content = chunk.choices[0]?.delta?.content || "";
-    if (content) {
-      // Send the chunk as a Server-Sent Event
-      const data = `data: ${JSON.stringify({ content })}\n\n`;
-      controller.enqueue(new TextEncoder().encode(data));
+      ? `You remember the following: ${memories}`
+      : `You don't have memories of this specific question and should respond with something that indicates you don't know.`
+      }. Please respond to the user and NEVER break character. Do not add anything that is not a response in character and do not ever admit to being an AI. If you don't know the answer to a user input say you don't know. Do not make up new character names that are not part of your memory or the crime.`,
+    });
+    
+    // For debugging
+    console.log(
+      "Messages being sent to OpenAI:",
+      JSON.stringify(updatedMessages)
+    );
+    
+    const completion = await client.chat.completions.create({
+      model: chatModel,
+      messages: updatedMessages,
+      stream: true,
+    });
+    
+    // Process the streaming response
+    for await (const chunk of completion) {
+      if (chunk.choices && chunk.choices.length > 0) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          // Send the chunk as a Server-Sent Event
+          const data = `data: ${JSON.stringify({ content })}\n\n`;
+          controller.enqueue(new TextEncoder().encode(data));
+        }
+      }
     }
+    
+    // Send an event to indicate the stream is complete
+    controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+  } catch (error: any) {
+    // Handle errors by sending them to the client
+    console.error("Error in AI chat:", error);
+    
+    // Create a user-friendly error message
+    let errorMessage = "An error occurred while processing your request.";
+    
+    if (error.code === 'overloaded_error') {
+      errorMessage = "OpenAI servers are currently overloaded. Please try again in a few moments.";
+    } else if (error.message) {
+      // Use the error message from the API if available
+      errorMessage = `Error: ${error.message}`;
+    }
+    
+    // Send the error to the client
+    const errorData = `data: ${JSON.stringify({ 
+      error: true, 
+      message: errorMessage,
+      code: error.code || 'unknown_error'
+    })}\n\n`;
+    
+    controller.enqueue(new TextEncoder().encode(errorData));
+    controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
   }
-
-  // Send an event to indicate the stream is complete
-  controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
 };
 
 export const verifyMotive = async (motive: string, crimeMotive: string) => {

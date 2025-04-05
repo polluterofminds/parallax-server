@@ -23,6 +23,8 @@ import {
   verifyAppKeyWithNeynar,
 } from "@farcaster/frame-node";
 import { sendFrameNotification } from "./utils/notifs";
+import { gameOver, initEventListeners } from "./utils/contract";
+import { Bindings } from "./utils/types";
 
 const bypassRoutes = ["/webhooks"];
 
@@ -34,26 +36,18 @@ const appClient = createAppClient({
 // Load environment variables
 dotenv.config();
 
-type Bindings = {
-  PINATA_JWT: string;
-  PINATA_GATEWAY_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
-  SUPABASE_URL: string;
-};
-
 // Get environment variables
 const env: Bindings = {
   PINATA_JWT: process.env.PINATA_JWT || "",
   PINATA_GATEWAY_URL: process.env.PINATA_GATEWAY_URL || "",
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   SUPABASE_URL: process.env.SUPABASE_URL || "",
-};
-
-type Scores = {
-  criminal: number;
-  victims: number;
-  motive: number;
-  total: number;
+  NEYNAR_API_KEY: process.env.NEYNAR_API_KEY || "", 
+  WEBSOCKET_RPC_URL: process.env.WEBSOCKET_RPC_URL || "",
+  RPC_URL: process.env.RPC_URL || "",
+  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS || "", 
+  CLAUDE_API_KEY: process.env.CLAUDE_API_KEY || "", 
+  PRIVATE_KEY: process.env.PRIVATE_KEY || ""
 };
 
 export type Character = {
@@ -68,6 +62,7 @@ export type Character = {
 declare module "hono" {
   interface ContextVariableMap {
     fid: number;
+    address: string;
   }
 }
 
@@ -94,8 +89,8 @@ app.use("*", async (c, next) => {
     if (token !== "TEST") {
       const decodedToken: any = jwtDecode(token);
 
-      const { signature, message, nonce } = decodedToken;
-      console.log({ signature, message, nonce });
+      const { signature, message, nonce, address } = decodedToken;
+      console.log({ signature, message, nonce, address });
 
       if (!signature || !message || !nonce) {
         console.log("Invalid token payload");
@@ -109,12 +104,15 @@ app.use("*", async (c, next) => {
         signature: signature,
       });
 
+      console.log(data);
+
       if (!success) {
         return c.json({ message: "Unauthorized" }, 401);
       }
 
       // Add fid and make it available in all requests
       c.set("fid", fid);
+      c.set("address", address);
     }
 
     await next();
@@ -325,6 +323,10 @@ app.post("/chat", async (c) => {
 app.post("/solve", async (c) => {
   try {
     const { userSolution } = await c.req.json();
+    
+    const fid = c.get("fid");
+    const address = c.get("address");
+
     const pinata = getPinata(c);
     const solutionFileDetails = await pinata.files.private
       .list()
@@ -345,13 +347,9 @@ app.post("/solve", async (c) => {
         .list()
         .keyvalues({ fullCrime: "true" });
       if (crimeResults && crimeResults.files[0]) {
-        // const crimeFileData = await pinata.gateways.private.get(
-        //   crimeResults.files[0].cid
-        // );
-        // const rawFile: any = crimeFileData.data;
-
-        const aiScore: any = await verifyMotive(userSolution.motive, raw.data);
-
+        console.log(userSolution.motive, raw.data.motive);
+        const aiScore: any = await verifyMotive(userSolution.motive, raw.data.motive);
+        console.log("AI score")
         try {
           scores.motive = parseFloat(aiScore);
           console.log("New Scores:");
@@ -368,8 +366,6 @@ app.post("/solve", async (c) => {
       scores.criminal < 0.8 ||
       scores.motive < 0.6
     ) {
-      // Send frame notifications
-
       return c.json(
         {
           data: {
@@ -393,15 +389,15 @@ app.post("/solve", async (c) => {
     }
 
     //  Update smart contract
-    //  Send frame notifications
-    // Fire off queuing request to reset game
+    const result = await gameOver(c, address);
+    console.log("Winner contract tx result: ", result)
 
     return c.json(
       {
         data: {
           status: "right",
           message:
-            "Congrats! You've solved the crime. Mint your reward for free.",
+            "Congrats! You've solved the crime. You just won the pot!"
         },
       },
       200
@@ -450,6 +446,8 @@ app.post("/new-case", async (c) => {
 // Start the server
 const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 console.log(`Server is running on port ${port}`);
+
+initEventListeners(env);
 
 serve({
   fetch: app.fetch,

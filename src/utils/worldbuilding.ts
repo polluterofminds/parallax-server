@@ -18,6 +18,7 @@ import { Character } from "..";
 import shortUUID from "short-uuid";
 import dotenv from "dotenv";
 import { FileListItem } from "pinata/dist";
+import { setCaseInfo } from "./contract";
 
 dotenv.config();
 
@@ -29,7 +30,7 @@ export const totalCharacters = 10;
 export const createNewCase = async (c: Context) => {
   try {
     const pinata = getPinata(c);
-
+    console.log("Removing any old case files...");
     //  First we remove old files
     const oldCharacters = await pinata.files.public
       .list()
@@ -40,6 +41,7 @@ export const createNewCase = async (c: Context) => {
       );
     }
 
+    console.log("Removing old memories...");
     //  Then we remove the old memories
     const oldMemories = await pinata.files.private
       .list()
@@ -51,6 +53,7 @@ export const createNewCase = async (c: Context) => {
       );
     }
 
+    console.log("removing public crime info...");
     //  Then we remove the public crime details
     const publicCrimeDetails = await pinata.files.public
       .list()
@@ -62,6 +65,7 @@ export const createNewCase = async (c: Context) => {
       );
     }
 
+    console.log("Removing private crime details...");
     //  Then we delete the private crime details
     const privateCrimeDetails = await pinata.files.private
       .list()
@@ -73,6 +77,7 @@ export const createNewCase = async (c: Context) => {
       );
     }
 
+    console.log("Removing motive file...");
     //  Finally we delete the motive file
     const motiveDetails = await pinata.files.private
       .list()
@@ -87,36 +92,44 @@ export const createNewCase = async (c: Context) => {
     //  Now we can generate the new stuff!
     const NUM_CHARACTERS = totalCharacters;
 
-    const characters = await Promise.all(
-      Array.from({ length: NUM_CHARACTERS }).map(async () => {
-        const gender = getGender();
-        const age = getRandomAge(19, 65);
-        const name = getRandomCharacterName(gender);
-        const backstory = await generateCustomBackstory(name!, gender, age);
-        const honesty = "always honest"; // Hard coding this for now because it didn't add value to the game
+    const characters: Character[] = [];
 
-        const uploadObject: Character = {
-          characterId: shortUUID.generate(),
-          characterName: name,
-          gender,
-          age,
-          backstory: backstory!,
-          honesty: `${name} is ${honesty}`,
-        };
+    for (let i = 0; i < NUM_CHARACTERS; i++) {
+      // Add a delay between requests to respect rate limits
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
+      }
 
-        await pinata.upload.public
-          .json(uploadObject)
-          .group(CHARACTER_DETAILS_GROUP_ID)
-          .name(name!)
-          .keyvalues({
-            characterId: uploadObject.characterId,
-            parallax_character: "true",
-          });
+      const gender = getGender();
+      const age = getRandomAge(19, 65);
+      const name = getRandomCharacterName(gender);
+      const backstory = await generateCustomBackstory(name!, gender, age);
+      const honesty = "always honest"; // Hard coding this for now because it didn't add value to the game
 
-        return uploadObject;
-      })
-    );
+      const uploadObject: Character = {
+        characterId: shortUUID.generate(),
+        characterName: name,
+        gender,
+        age,
+        backstory: backstory!,
+        honesty: `${name} is ${honesty}`,
+      };
 
+      // Upload one at a time
+      await pinata.upload.public
+        .json(uploadObject)
+        .group(CHARACTER_DETAILS_GROUP_ID)
+        .name(name!)
+        .keyvalues({
+          characterId: uploadObject.characterId,
+          parallax_character: "true",
+        });
+
+      characters.push(uploadObject);
+
+      // Optional: log progress
+      console.log(`Generated character ${i + 1}/${NUM_CHARACTERS}: ${name}`);
+    }
     //  Create the secret
     const mysteryCrime = await generateCrime();
     console.log({ mysteryCrime });
@@ -135,11 +148,16 @@ export const createNewCase = async (c: Context) => {
     const publicFile = new File([publicInfo!], "parallax_crime_public.txt", {
       type: "text/plain",
     });
-    await pinata.upload.public
+    const publicCrimeRes = await pinata.upload.public
       .file(publicFile)
       .name("Parallax Public Crime Info")
       .keyvalues({ publicCrime: "true" });
 
+    const publicCrimeHash = publicCrimeRes.cid;
+
+    console.log("setting case file...");
+
+    await setCaseInfo(c, `ipfs://${publicCrimeHash}`);
     //  Get verifiable details
     let tryAgain = true;
     while (tryAgain) {
