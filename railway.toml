@@ -4,8 +4,6 @@ buildCommand = "npm run build"
 
 [deploy]
 startCommand = "npm start"
-healthcheckPath = "/"
-healthcheckTimeout = 60
 
 [deploy.envs]
 NODE_ENV = "production"
