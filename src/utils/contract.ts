@@ -34,7 +34,7 @@ export function initEventListeners(env: Bindings) {
             amount,
             6
           )} USDC in case ${caseNumber}`
-        );
+        );        
         const user = await getUserByVerifiedAddress(c, player);
         const userInfo = user[player];
         const username = userInfo.username;
@@ -75,10 +75,6 @@ export function initEventListeners(env: Bindings) {
         6
       )} USDC`
     );
-
-    const c: any = {
-      env
-    }
 
     const user = await getUserByVerifiedAddress(c, winner);
     const userInfo = user[winner];
