@@ -148,12 +148,7 @@ app.post("/webhooks", async (c) => {
 
         break;
       case "notifications_enabled":
-        await setUserNotificationDetails(c, fid, event.notificationDetails);
-        await sendFrameNotification(c, {
-          fid,
-          title: "Ding ding ding",
-          body: "Notifications are now enabled",
-        });
+        await setUserNotificationDetails(c, fid, event.notificationDetails);       
 
         break;
       case "notifications_disabled":
@@ -222,12 +217,12 @@ app.get("/users/me", async (c) => {
 app.get("/chat/:characterId", async (c) => {
   try {
     const characterId = c.req.param("characterId");
-
+    console.log({characterId})
     const pinata = getPinata(c);
 
     const conversationFiles = await pinata.files.private
       .list()
-      .keyvalues({ characterId, conversation: "true" });
+      .keyvalues({ characterId, conversation: "true", fid: c.get("fid").toString() });
 
     if (!conversationFiles.files || conversationFiles.files.length === 0) {
       return c.json({ messages: [] }, 200);
@@ -248,10 +243,14 @@ app.post("/chat", async (c) => {
   try {
     const { messages, characterId, crime } = await c.req.json();
 
-    //  Verify Auth here
-
-    //  Upload conversation to Pinata with reference to user
     const pinata = getPinata(c);
+
+    await pinata.upload.private.json(messages).keyvalues({
+      characterId, 
+      conversation: "true", 
+      fid: c.get("fid").toString()
+    })
+
     const characterDetailFiles = await pinata.files.public
       .list()
       .keyvalues({ characterId, parallax_character: "true" });
@@ -319,6 +318,26 @@ app.post("/chat", async (c) => {
     return c.json({ message: "Server error" }, 500);
   }
 });
+
+app.post("/storage/chat/:characterId", async (c) => {
+  try {
+    const { messages } = await c.req.json();
+    const characterId = c.req.param("characterId");
+
+    const pinata = getPinata(c);
+
+    await pinata.upload.private.json(messages).keyvalues({
+      characterId, 
+      conversation: "true", 
+      fid: c.get("fid").toString()
+    })
+
+    return c.json({ data: "success" }, 200);
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server error" }, 500);
+  }
+})
 
 app.post("/solve", async (c) => {
   try {
