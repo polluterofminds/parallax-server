@@ -42,12 +42,12 @@ const env: Bindings = {
   PINATA_GATEWAY_URL: process.env.PINATA_GATEWAY_URL || "",
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   SUPABASE_URL: process.env.SUPABASE_URL || "",
-  NEYNAR_API_KEY: process.env.NEYNAR_API_KEY || "", 
+  NEYNAR_API_KEY: process.env.NEYNAR_API_KEY || "",
   WEBSOCKET_RPC_URL: process.env.WEBSOCKET_RPC_URL || "",
   RPC_URL: process.env.RPC_URL || "",
-  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS || "", 
-  CLAUDE_API_KEY: process.env.CLAUDE_API_KEY || "", 
-  PRIVATE_KEY: process.env.PRIVATE_KEY || ""
+  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS || "",
+  CLAUDE_API_KEY: process.env.CLAUDE_API_KEY || "",
+  PRIVATE_KEY: process.env.PRIVATE_KEY || "",
 };
 
 export type Character = {
@@ -126,7 +126,9 @@ app.post("/webhooks", async (c) => {
   try {
     const requestJson = await c.req.json();
     console.log(requestJson);
-    const verifier = createVerifyAppKeyWithHub('https://hub.farcaster.standardcrypto.vc:2281')
+    const verifier = createVerifyAppKeyWithHub(
+      "https://hub.farcaster.standardcrypto.vc:2281"
+    );
     const data = await parseWebhookEvent(requestJson, verifier);
     const fid = data.fid;
     const event = data.event;
@@ -141,14 +143,14 @@ app.post("/webhooks", async (c) => {
           });
         } else {
           await deleteUserNotificationDetails(c, fid);
-        }        
+        }
         break;
       case "frame_removed":
         await deleteUserNotificationDetails(c, fid);
 
         break;
       case "notifications_enabled":
-        await setUserNotificationDetails(c, fid, event.notificationDetails);       
+        await setUserNotificationDetails(c, fid, event.notificationDetails);
 
         break;
       case "notifications_disabled":
@@ -184,6 +186,20 @@ app.get("/", (c) => {
 app.get("/users/me", async (c) => {
   try {
     const fid = c.get("fid");
+    //  If no FID, we are in test mode
+    if (!fid) {
+      return c.json(
+        {
+          profile: {
+            fid: "4823",
+            username: "polluterofminds",
+            displayName: "Justin Hunter",
+            frameAdded: true,
+          },
+        },
+        200
+      );
+    }
     const res = await fetch(
       `https://hub.pinata.cloud/v1/userDataByFid?fid=${fid}`
     );
@@ -217,12 +233,16 @@ app.get("/users/me", async (c) => {
 app.get("/chat/:characterId", async (c) => {
   try {
     const characterId = c.req.param("characterId");
-    console.log({characterId})
+    console.log({ characterId });
     const pinata = getPinata(c);
 
     const conversationFiles = await pinata.files.private
       .list()
-      .keyvalues({ characterId, conversation: "true", fid: c.get("fid").toString() });
+      .keyvalues({
+        characterId,
+        conversation: "true",
+        fid: c.get("fid").toString(),
+      });
 
     if (!conversationFiles.files || conversationFiles.files.length === 0) {
       return c.json({ messages: [] }, 200);
@@ -246,10 +266,10 @@ app.post("/chat", async (c) => {
     const pinata = getPinata(c);
 
     await pinata.upload.private.json(messages).keyvalues({
-      characterId, 
-      conversation: "true", 
-      fid: c.get("fid").toString()
-    })
+      characterId,
+      conversation: "true",
+      fid: c.get("fid").toString(),
+    });
 
     const characterDetailFiles = await pinata.files.public
       .list()
@@ -327,22 +347,22 @@ app.post("/storage/chat/:characterId", async (c) => {
     const pinata = getPinata(c);
 
     await pinata.upload.private.json(messages).keyvalues({
-      characterId, 
-      conversation: "true", 
-      fid: c.get("fid").toString()
-    })
+      characterId,
+      conversation: "true",
+      fid: c.get("fid").toString(),
+    });
 
     return c.json({ data: "success" }, 200);
   } catch (error) {
     console.log(error);
     return c.json({ message: "Server error" }, 500);
   }
-})
+});
 
 app.post("/solve", async (c) => {
   try {
     const { userSolution } = await c.req.json();
-    
+
     const fid = c.get("fid");
     const address = c.get("address");
 
@@ -367,8 +387,11 @@ app.post("/solve", async (c) => {
         .keyvalues({ fullCrime: "true" });
       if (crimeResults && crimeResults.files[0]) {
         console.log(userSolution.motive, raw.data.motive);
-        const aiScore: any = await verifyMotive(userSolution.motive, raw.data.motive);
-        console.log("AI score")
+        const aiScore: any = await verifyMotive(
+          userSolution.motive,
+          raw.data.motive
+        );
+        console.log("AI score");
         try {
           scores.motive = parseFloat(aiScore);
           console.log("New Scores:");
@@ -409,14 +432,13 @@ app.post("/solve", async (c) => {
 
     //  Update smart contract
     const result = await gameOver(c, address);
-    console.log("Winner contract tx result: ", result)
+    console.log("Winner contract tx result: ", result);
 
     return c.json(
       {
         data: {
           status: "right",
-          message:
-            "Congrats! You've solved the crime. You just won the pot!"
+          message: "Congrats! You've solved the crime. You just won the pot!",
         },
       },
       200
