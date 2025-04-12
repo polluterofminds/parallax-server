@@ -1,7 +1,6 @@
-import { Context, Hono, Next } from "hono";
+import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
-import { getCookie } from "hono/cookie";
 import { chatWithCharacter, verifyMotive } from "./utils/ai";
 import { createNewCase } from "./utils/worldbuilding";
 import { getPinata, MEMORIES_GROUP_ID } from "./utils/storage";
@@ -24,9 +23,12 @@ import {
   verifyAppKeyWithNeynar,
 } from "@farcaster/frame-node";
 import { sendFrameNotification } from "./utils/notifs";
-import { gameOver, initEventListeners } from "./utils/contract";
+import { gameOver, hasPlayerDeposited, initEventListeners, submitSolution } from "./utils/contract";
 import { Bindings } from "./utils/types";
+
+//  @ts-expect-error no types needed
 import cron from "node-cron";
+import { getUserByVerifiedAddress } from "./utils/farcaster";
 
 const bypassRoutes = ["/webhooks"];
 
@@ -101,7 +103,7 @@ app.use("*", async (c, next) => {
 
       const { data, success, fid } = await appClient.verifySignInMessage({
         nonce: nonce,
-        domain: "parallax.cool",
+        domain: "5f84-66-68-201-142.ngrok-free.app",
         message: message,
         signature: signature,
       });
@@ -207,6 +209,28 @@ app.get("/episode", async (c) => {
     console.log(error);
   }
 });
+
+app.get("/deposit-status", async (c) => {
+  try {
+    const address = c.req.query("address");
+    const fid = c.get("fid");
+    
+    if(!address) {
+      return c.json({ message: "No wallet address" }, 400);
+    }
+
+    // const userInfo = await getUserByVerifiedAddress(c, address);
+    // const user = userInfo;
+    // console.log(user);
+
+    const depositStatus = await hasPlayerDeposited(c, address);
+    console.log(depositStatus);
+    return c.json({ data: depositStatus });
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server error" }, 500);
+  }
+})
 
 app.get("/solution_attempts", async (c) => {
   try {
@@ -375,9 +399,13 @@ app.post("/chat", async (c) => {
       fid: c.get("fid").toString(),
     });
 
+    console.log("Uploaded messages...");
+
     const characterDetailFiles = await pinata.files.public
       .list()
       .keyvalues({ characterId, parallax_character: "true" });
+
+    console.log("Got the character details file...");
     const file =
       characterDetailFiles.files && characterDetailFiles.files[0]
         ? characterDetailFiles.files[0]
@@ -393,22 +421,31 @@ app.post("/chat", async (c) => {
       }`,
     });
     // Find nearest memory/memories
-    const nearest: any = await pinata.files.private.queryVectors({
-      groupId: MEMORIES_GROUP_ID,
-      query: `${characterDetails?.characterName || ""} - ${
-        messages[messages.length - 1].content
-      }`,
-    });
-
-    console.log(nearest);
-    const matches = nearest.matches.filter(
-      (m: VectorQueryMatch) => m.score >= 0.5
-    );
+    let matches: any[] = []
+    try {
+      const nearest: any = await pinata.files.private.queryVectors({
+        groupId: MEMORIES_GROUP_ID,
+        query: `${characterDetails?.characterName || ""} - ${
+          messages[messages.length - 1].content
+        }`,
+      });
+  
+      console.log({nearest});
+      matches = nearest.matches.filter(
+        (m: VectorQueryMatch) => m.score >= 0.5
+      );
+      
+    } catch (error) {
+      console.log("Error getting memory matches...")
+      console.log(error);
+    }
+    console.log("Matches:")
     console.log(matches);
     let memoryToUse = "";
     if (matches && matches.length > 0) {
       const data = await pinata.gateways.private.get(matches[0].cid);
       const raw: any = data.data;
+      console.log(raw)
       memoryToUse = raw.includes(characterDetails.characterName) ? raw : "";
     }
     console.log(memoryToUse.length);
@@ -506,10 +543,9 @@ app.post("/solve", async (c) => {
       return c.json({ message: "No episode found" }, 400);
     }
 
-    const { userSolution } = await c.req.json();
+    const { userSolution, address } = await c.req.json();
 
     const fid = c.get("fid");
-    const address = c.get("address");
 
     //  Check if the user has attempted multiple solutions
     const caseNumber = episode.case_number;
@@ -610,6 +646,8 @@ app.post("/solve", async (c) => {
         200
       );
     }
+
+    await submitSolution(c, address);
 
     return c.json(
       {

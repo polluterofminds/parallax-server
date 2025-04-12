@@ -97,15 +97,7 @@ export const removeOldCaseData = async (c: Context) => {
 export const totalCharacters = 10;
 
 export const generateCharacters = async (c: Context) => {
-  try {
-    const localCharacters = JSON.parse(
-      fs.readFileSync("./characters.json", "utf-8")
-    );
-
-    if (localCharacters && localCharacters.length > 0) {
-      return localCharacters;
-    }
-
+  try {    
     const pinata = getPinata(c);
 
     const NUM_CHARACTERS = totalCharacters;
@@ -149,7 +141,6 @@ export const generateCharacters = async (c: Context) => {
       console.log(`Generated character ${i + 1}/${NUM_CHARACTERS}: ${name}`);
     }
 
-    fs.writeFileSync("characters.json", JSON.stringify(characters));
     return characters;
   } catch (error) {
     console.log("Error generating characters ", error);
@@ -199,10 +190,10 @@ export const giveCharactersMemories = async (
           );
 
           // Uncomment when ready to save to database
-          // await pinata.upload.private
-          //   .file(file)
-          //   .group(MEMORIES_GROUP_ID)
-          //   .vectorize();
+          await pinata.upload.private
+            .file(file)
+            .group(MEMORIES_GROUP_ID)
+            .vectorize();
 
           console.log(`Saved memory ${i + 1} for ${character.characterName}`);
         }
@@ -227,35 +218,6 @@ export const createNewCase = async (c: Context) => {
   try {
     const pinata = getPinata(c);
     const supabase = getSupabase(c);
-
-    console.log("Setting new case");
-
-    let { data: episodes, error } = await supabase
-      .from("episodes")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.log("Supabase error: ", error);
-      throw error;
-    }
-
-    const episode = episodes && episodes[0] ? episodes[0] : null;
-
-    if (!episode) {
-      throw new Error("No episode found");
-    }
-
-    const newCaseNumber = episode.case_number + 1;
-
-    const { data, error: insertError } = await supabase
-      .from("episodes")
-      .insert([{ case_number: newCaseNumber, duration: 7 }]);
-
-    if (insertError) {
-      console.log("Supabase error: ", insertError);
-      throw insertError;
-    }
 
     console.log("Removing old data...");
     await removeOldCaseData(c);
@@ -290,6 +252,35 @@ export const createNewCase = async (c: Context) => {
     console.log("setting case file...");
 
     await setCaseInfo(c, `ipfs://${publicCrimeHash}`);
+
+    console.log("Setting new case");
+
+    let { data: episodes, error } = await supabase
+      .from("episodes")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Supabase error: ", error);
+      throw error;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    if (!episode) {
+      throw new Error("No episode found");
+    }
+
+    const newCaseNumber = episode.case_number + 1;
+
+    const { data, error: insertError } = await supabase
+      .from("episodes")
+      .insert([{ case_number: newCaseNumber, duration: 7, case_hash: `ipfs://${publicCrimeHash}` }]);
+
+    if (insertError) {
+      console.log("Supabase error: ", insertError);
+      throw insertError;
+    }
 
     //  Get verifiable details
 

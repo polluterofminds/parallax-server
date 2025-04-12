@@ -9,6 +9,7 @@ export type Bindings = {
     NEYNAR_API_KEY: string;
     CLAUDE_API_KEY: string;
     PRIVATE_KEY: string;
+    GEMINI_API_KEY: string;
   };
 
 export type FrameNotificationDetails = {

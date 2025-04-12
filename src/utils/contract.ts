@@ -5,6 +5,7 @@ import { sendNotificationsToAllPlayers } from "./notifs";
 import { Bindings } from "./types";
 import { getUserByVerifiedAddress } from "./farcaster";
 import { createNewCase } from "./worldbuilding";
+import { getSupabase } from "./db";
 
 export function initEventListeners(env: Bindings) {
   const c: any = {
@@ -20,12 +21,12 @@ export function initEventListeners(env: Bindings) {
     wsProvider
   );
 
-  console.log("Initialized event listeners")
+  console.log("Initialized event listeners");
 
   // Listen for PlayerDeposited events
   wsContract.on(
     "PlayerDeposited",
-    async (player, amount, caseNumber, event) => {
+    async (caseNumber, player, amount, event) => {
       //  Need to find the Farcaster user info based on player address
       try {
         console.log(
@@ -54,6 +55,7 @@ export function initEventListeners(env: Bindings) {
   wsContract.on("CaseStatusChanged", async (caseNumber, status, event) => {
     const statusMap = ["Pending", "Active", "Completed"];
     if (statusMap[status] === "Active") {
+      console.log("New case started!");
       //  Send notification that the investigation has begun
       // await sendNotificationsToAllPlayers(
       //   c,
@@ -67,17 +69,12 @@ export function initEventListeners(env: Bindings) {
   });
 
   // Listen for CaseEnded events
-  wsContract.on("CaseEnded", async (caseNumber, winner, prize, event) => {
+  wsContract.on("CaseEnded", async (caseNumber, winners, prize, event) => {
     console.log(
-      `Case Ended: Case ${caseNumber} won by ${winner} with prize ${ethers.formatUnits(
-        prize,
-        6
-      )} USDC`
+      `Case Ended: Case ${caseNumber} won by ${
+        winners.length
+      } with prize ${ethers.formatUnits(prize, 6)} USDC`
     );
-
-    const user = await getUserByVerifiedAddress(c, winner);
-    const userInfo = user[winner];
-    const username = userInfo.username;
 
     // await sendNotificationsToAllPlayers(
     //   c,
@@ -94,7 +91,7 @@ export function initEventListeners(env: Bindings) {
   });
 
   // Listen for PlayerRefunded events
-  wsContract.on("PlayerRefunded", (player, amount, caseNumber, event) => {
+  wsContract.on("PlayerRefunded", (caseNumber, player, amount, event) => {
     console.log(
       `Player Refunded: ${player} refunded ${ethers.formatUnits(
         amount,
@@ -120,7 +117,7 @@ export const gameOver = async (c: Context) => {
     const tx = await contract.gameOver();
     console.log("Game over tx: ");
     console.log(tx);
-    await tx.wait();    
+    await tx.wait();
 
     console.log("Sending notifications...");
     // await sendNotificationsToAllPlayers(
@@ -143,7 +140,7 @@ export const setCaseInfo = async (c: Context, ipfsString: string) => {
     const provider = new ethers.JsonRpcProvider(c.env.RPC_URL);
     const wallet = new ethers.Wallet(c.env.PRIVATE_KEY, provider);
     const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, wallet);
-    const tx = await contract.setCaseCrimeInfo(ipfsString);
+    const tx = await contract.activateCase(ipfsString);
     console.log("Case info tx:");
     console.log(tx);
     await tx.wait();
@@ -153,3 +150,47 @@ export const setCaseInfo = async (c: Context, ipfsString: string) => {
     throw error;
   }
 };
+
+export const hasPlayerDeposited = async (c: Context, address: string) => {
+  try {
+    const provider = new ethers.JsonRpcProvider(c.env.RPC_URL);
+    const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, provider);
+
+    const supabase = getSupabase(c);
+
+    let { data: episodes, error } = await supabase
+      .from("episodes")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Supabase error: ", error);
+      throw error;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    if (!episode) {
+      throw new Error("No episode found");
+    }
+
+    const caseNumber = episode.case_number;
+
+    const depositStatus = await contract.checkPlayerDepositStatus(
+      caseNumber,
+      address
+    );
+
+    return depositStatus;
+  } catch (error) {
+    console.log(error);
+    throw error;
+  }
+};
+
+export const submitSolution = async (c: Context, address: string) => {
+  const provider = new ethers.JsonRpcProvider(c.env.RPC_URL);
+  const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, provider);
+  const tx = await contract.submitSolution(address);
+  await tx.wait();
+}
