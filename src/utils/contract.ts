@@ -1,9 +1,7 @@
 import { Context } from "hono";
 import { ethers } from "ethers";
 import { abi } from "./abi";
-import {
-  sendNotificationsToAllPlayers,
-} from "./notifs";
+import { sendNotificationsToAllPlayers } from "./notifs";
 import { Bindings } from "./types";
 import { getUserByVerifiedAddress } from "./farcaster";
 import { createNewCase } from "./worldbuilding";
@@ -21,7 +19,8 @@ export function initEventListeners(env: Bindings) {
     abi,
     wsProvider
   );
-  console.log("Initializing event listeners for Parallax contract...");
+
+  console.log("Initialized event listeners")
 
   // Listen for PlayerDeposited events
   wsContract.on(
@@ -34,17 +33,17 @@ export function initEventListeners(env: Bindings) {
             amount,
             6
           )} USDC in case ${caseNumber}`
-        );        
+        );
         const user = await getUserByVerifiedAddress(c, player);
         const userInfo = user[player];
         const username = userInfo.username;
-
+        console.log("New player joined: " + username);
         //  Get all active players
-        await sendNotificationsToAllPlayers(
-          c,
-          "A new detecive has joined the investigation!",
-          `${username} has joined!`
-        );
+        // await sendNotificationsToAllPlayers(
+        //   c,
+        //   "A new detecive has joined the investigation!",
+        //   `${username} has joined!`
+        // );
       } catch (error) {
         console.log(`PlayerDeposited error: `, error);
       }
@@ -56,11 +55,11 @@ export function initEventListeners(env: Bindings) {
     const statusMap = ["Pending", "Active", "Completed"];
     if (statusMap[status] === "Active") {
       //  Send notification that the investigation has begun
-      await sendNotificationsToAllPlayers(
-        c,
-        "A new case has started!",
-        `Join or begin your investigation now!`
-      );
+      // await sendNotificationsToAllPlayers(
+      //   c,
+      //   "A new case has started!",
+      //   `Join or begin your investigation now!`
+      // );
     }
     console.log(
       `Case Status Changed: Case ${caseNumber} status is now ${statusMap[status]}`
@@ -80,42 +79,13 @@ export function initEventListeners(env: Bindings) {
     const userInfo = user[winner];
     const username = userInfo.username;
 
-    await sendNotificationsToAllPlayers(
-      c,
-      "The case has been solved!",
-      `${username} solved the case first and won ${ethers.formatUnits(
-        prize,
-        6
-      )} USDC`
-    );
+    // await sendNotificationsToAllPlayers(
+    //   c,
+    //   "The case is over!",
+    //   "Winnings will be dispersed to all who solved the case."
+    // );
     console.log("Creating new case");
     await createNewCase(c);
-  });
-
-  // Listen for NewCaseStarted events
-  wsContract.on("NewCaseStarted", async (caseNumber, crimeInfoCID, event) => {
-    console.log(
-      `New Case Started: Case ${caseNumber} with crime info CID ${crimeInfoCID}`
-    );
-
-    await sendNotificationsToAllPlayers(
-      c,
-      "A new crime has been committed",
-      `Join the investigation now and try to solve the crime first!`
-    );
-  });
-
-  // Listen for CaseCrimeInfoUpdated events
-  wsContract.on("CaseCrimeInfoUpdated", async (caseNumber, crimeInfoCID, event) => {
-    console.log(
-      `Case Crime Info Updated: Case ${caseNumber} crime info CID updated to ${crimeInfoCID}`
-    );
-
-    await sendNotificationsToAllPlayers(
-      c,
-      "A new crime has been committed",
-      `Join the investigation now and try to solve the crime first!`
-    );
   });
 
   // Listen for CaseCancelled events
@@ -141,22 +111,31 @@ export function initEventListeners(env: Bindings) {
   });
 }
 
-export const gameOver = async (c: Context, address: string) => {
+export const gameOver = async (c: Context) => {
   try {
     console.log("Calling game over function on contract");
     const provider = new ethers.JsonRpcProvider(c.env.RPC_URL);
     const wallet = new ethers.Wallet(c.env.PRIVATE_KEY, provider);
     const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, wallet);
-    const tx = await contract.gameOver(address);
-    console.log("Game over tx: ")
+    const tx = await contract.gameOver();
+    console.log("Game over tx: ");
     console.log(tx);
-    await tx.wait();
+    await tx.wait();    
+
+    console.log("Sending notifications...");
+    // await sendNotificationsToAllPlayers(
+    //   c,
+    //   "The case is over!",
+    //   "Winnings will be dispersed to all who solved the case."
+    // );
+    console.log("Creating new case");
+    await createNewCase(c);
     return tx.hash;
   } catch (error) {
     console.log(error);
     throw error;
   }
-}
+};
 
 export const setCaseInfo = async (c: Context, ipfsString: string) => {
   try {
@@ -165,7 +144,7 @@ export const setCaseInfo = async (c: Context, ipfsString: string) => {
     const wallet = new ethers.Wallet(c.env.PRIVATE_KEY, provider);
     const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, wallet);
     const tx = await contract.setCaseCrimeInfo(ipfsString);
-    console.log("Case info tx:")
+    console.log("Case info tx:");
     console.log(tx);
     await tx.wait();
     return tx;
@@ -173,4 +152,4 @@ export const setCaseInfo = async (c: Context, ipfsString: string) => {
     console.log("New case info error");
     throw error;
   }
-}
+};

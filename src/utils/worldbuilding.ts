@@ -5,6 +5,7 @@ import {
   MEMORIES_GROUP_ID,
 } from "./storage";
 import {
+  analyzeCrimeAndDistributeInformation,
   generateCrime,
   generateCustomBackstory,
   generatePublicCrimeInfo,
@@ -12,22 +13,21 @@ import {
   getGender,
   getRandomAge,
   getRandomCharacterName,
-  giveCharacterCrimeMemory,
 } from "./ai";
 import { Character } from "..";
 import shortUUID from "short-uuid";
 import dotenv from "dotenv";
 import { FileListItem } from "pinata/dist";
 import { setCaseInfo } from "./contract";
+import fs from "fs";
+import { getSupabase } from "./db";
 
 dotenv.config();
 
 export const worldDescription =
   "The year is 2125, the world is not only more insular, countries are insular. States have become neighborhoods. Rules are determined by each neighborhood. Trans-neighborhood travel is often banned and trans-global travel can only happen the through deals brokered across multiple territories and with the backing of the few tech companies that can provide air travel. Yet, through it all, the neighborhood of Helix has built a community of openness and trust. Its citizens know each other, socialize with each other, and are happy.";
 
-export const totalCharacters = 10;
-
-export const createNewCase = async (c: Context) => {
+export const removeOldCaseData = async (c: Context) => {
   try {
     const pinata = getPinata(c);
     console.log("Removing any old case files...");
@@ -88,8 +88,26 @@ export const createNewCase = async (c: Context) => {
         motiveDetails.files.map((c: FileListItem) => c.id)
       );
     }
+  } catch (error) {
+    console.log("Error removing data: ", error);
+    throw error;
+  }
+};
 
-    //  Now we can generate the new stuff!
+export const totalCharacters = 10;
+
+export const generateCharacters = async (c: Context) => {
+  try {
+    const localCharacters = JSON.parse(
+      fs.readFileSync("./characters.json", "utf-8")
+    );
+
+    if (localCharacters && localCharacters.length > 0) {
+      return localCharacters;
+    }
+
+    const pinata = getPinata(c);
+
     const NUM_CHARACTERS = totalCharacters;
 
     const characters: Character[] = [];
@@ -130,6 +148,120 @@ export const createNewCase = async (c: Context) => {
       // Optional: log progress
       console.log(`Generated character ${i + 1}/${NUM_CHARACTERS}: ${name}`);
     }
+
+    fs.writeFileSync("characters.json", JSON.stringify(characters));
+    return characters;
+  } catch (error) {
+    console.log("Error generating characters ", error);
+    throw error;
+  }
+};
+
+export const giveCharactersMemories = async (
+  c: Context,
+  characters: Character[],
+  mysteryCrime: string
+) => {
+  const pinata = getPinata(c);
+  try {
+    console.log("Analyzing crime and distributing information...");
+
+    // Analyze the crime and distribute information
+    const { crimeAnalysis, clueDistribution, characterMemories } =
+      await analyzeCrimeAndDistributeInformation(mysteryCrime, characters);
+
+    // Save the memory data for each character
+    for (const charMemories of characterMemories) {
+      const character = characters.find(
+        (c) => c.characterName === charMemories.character
+      );
+      if (!character) continue;
+
+      try {
+        console.log(`Processing memories for: ${character.characterName}`);
+
+        // Create a file for each memory
+        for (let i = 0; i < charMemories.memories.length; i++) {
+          const memoryData = charMemories.memories[i];
+
+          const memoryContent = `${
+            character.characterName
+          } memory details: ${memoryData.memory!}`;
+
+          const blob = new Blob([memoryContent], { type: "text/plain" });
+
+          const file = new File(
+            [blob],
+            `${character.characterName}-memory-${i + 1}`,
+            {
+              type: "text/plain",
+            }
+          );
+
+          // Uncomment when ready to save to database
+          // await pinata.upload.private
+          //   .file(file)
+          //   .group(MEMORIES_GROUP_ID)
+          //   .vectorize();
+
+          console.log(`Saved memory ${i + 1} for ${character.characterName}`);
+        }
+      } catch (error) {
+        console.log("Error for character: ", character.characterName);
+        console.log(error);
+      }
+    }
+
+    return {
+      crimeAnalysis,
+      clueDistribution,
+      characterMemories,
+    };
+  } catch (error) {
+    console.log("Memory generation error: ", error);
+    throw error;
+  }
+};
+
+export const createNewCase = async (c: Context) => {
+  try {
+    const pinata = getPinata(c);
+    const supabase = getSupabase(c);
+
+    console.log("Setting new case");
+
+    let { data: episodes, error } = await supabase
+      .from("episodes")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Supabase error: ", error);
+      throw error;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    if (!episode) {
+      throw new Error("No episode found");
+    }
+
+    const newCaseNumber = episode.case_number + 1;
+
+    const { data, error: insertError } = await supabase
+      .from("episodes")
+      .insert([{ case_number: newCaseNumber, duration: 7 }]);
+
+    if (insertError) {
+      console.log("Supabase error: ", insertError);
+      throw insertError;
+    }
+
+    console.log("Removing old data...");
+    await removeOldCaseData(c);
+
+    const characters = await generateCharacters(c);
+
     //  Create the secret
     const mysteryCrime = await generateCrime();
     console.log({ mysteryCrime });
@@ -158,7 +290,9 @@ export const createNewCase = async (c: Context) => {
     console.log("setting case file...");
 
     await setCaseInfo(c, `ipfs://${publicCrimeHash}`);
+
     //  Get verifiable details
+
     let tryAgain = true;
     while (tryAgain) {
       const details = await getCrimeDetails(mysteryCrime!);
@@ -174,8 +308,6 @@ export const createNewCase = async (c: Context) => {
             .keyvalues({ parallax_solution: "true" });
           tryAgain = false;
         }
-
-        //  This is the text we will use semantic search against to solve the crime
       } catch (error) {
         console.log("Error with details: ", details);
         console.log(error);
@@ -183,42 +315,7 @@ export const createNewCase = async (c: Context) => {
     }
 
     //  Give the characters memories
-    for (const character of characters) {
-      try {
-        console.log(character.characterName);
-        const memory = await giveCharacterCrimeMemory(mysteryCrime!, character);
-        const blob1 = new Blob(
-          [`${character.characterName} memory details: ${memory!}`],
-          { type: "text/plain" }
-        );
-        const file1 = new File([blob1], `${character.characterName}-memory-1`, {
-          type: "text/plain",
-        });
-        await pinata.upload.private
-          .file(file1)
-          .group(MEMORIES_GROUP_ID)
-          .vectorize();
-
-        const memory2 = await giveCharacterCrimeMemory(
-          mysteryCrime!,
-          character
-        );
-        const blob2 = new Blob(
-          [`${character.characterName} memory details: ${memory2!}`],
-          { type: "text/plain" }
-        );
-        const file2 = new File([blob2], `${character.characterName}-memory-2`, {
-          type: "text/plain",
-        });
-        await pinata.upload.private
-          .file(file2)
-          .group(MEMORIES_GROUP_ID)
-          .vectorize();
-      } catch (error) {
-        console.log("Error for character: ", character.characterName);
-        console.log(error);
-      }
-    }
+    await giveCharactersMemories(c, characters, mysteryCrime!);
 
     return "success";
   } catch (error) {

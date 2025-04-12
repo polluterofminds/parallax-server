@@ -14,6 +14,7 @@ import {
   deleteUserNotificationDetails,
   getSupabase,
   getUserNotificationDetails,
+  isCaseOver,
   setUserNotificationDetails,
 } from "./utils/db";
 import {
@@ -25,6 +26,7 @@ import {
 import { sendFrameNotification } from "./utils/notifs";
 import { gameOver, initEventListeners } from "./utils/contract";
 import { Bindings } from "./utils/types";
+import cron from "node-cron";
 
 const bypassRoutes = ["/webhooks"];
 
@@ -113,6 +115,8 @@ app.use("*", async (c, next) => {
       // Add fid and make it available in all requests
       c.set("fid", fid);
       c.set("address", address);
+    } else {
+      c.set("fid", 0);
     }
 
     await next();
@@ -183,6 +187,108 @@ app.get("/", (c) => {
   return c.text("Hello Hono on Railway!");
 });
 
+app.get("/episode", async (c) => {
+  try {
+    const supabase = getSupabase(c);
+
+    let { data: episodes, error } = await supabase
+      .from("episodes")
+      .select("*")
+      .limit(2)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+    return c.json({ data: episode }, 200);
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+app.get("/solution_attempts", async (c) => {
+  try {
+    const fid = c.get("fid");
+    const supabase = getSupabase(c);
+    let { data: episodes, error: episodesError } = await supabase
+      .from("episodes")
+      .select("*")
+      .limit(2)
+      .order("created_at", { ascending: false });
+
+    if (episodesError) {
+      throw episodesError;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    let { data: solution_attempts, error: solutionError } = await supabase
+      .from("solution_attempts")
+      .select("*")
+      .eq("fid", fid);
+
+    if (solutionError) {
+      console.log("Supabase solution error", solutionError);
+    }
+
+    const solutionAttempts = solution_attempts?.length || 0;
+
+    let { data: solution_payments, error } = await supabase
+      .from("solution_payments")
+      .select("*")
+      .eq("fid", fid)
+      .eq("case_number", episode.case_number);
+
+      if(error) {
+        throw error;
+      }
+
+      console.log(solution_payments)
+    return c.json({ data: { solutionAttempts, payment: solution_payments && solution_payments.length > 0 ? true : false } }, 200);
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server error" }, 500);
+  }
+});
+
+app.post("/solution_attempts", async (c) => {
+  try {
+    const fid = c.get("fid");
+    const supabase = getSupabase(c);
+    let { data: episodes, error: episodesError } = await supabase
+      .from("episodes")
+      .select("*")
+      .limit(2)
+      .order("created_at", { ascending: false });
+
+    if (episodesError) {
+      throw episodesError;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    if (!episode) {
+      return c.json({ message: "No current case found" }, 404);
+    }
+
+    const { data, error } = await supabase
+      .from("solution_payments")
+      .insert([{ fid: fid, case_number: episode.case_number, has_paid: true }])
+      .select();
+
+    if (error) {
+      throw error;
+    }
+
+    return c.json({ message: "Success" }, 200);
+  } catch (error) {
+    console.log(error);
+    return c.json({ message: "Server error" }, 500);
+  }
+});
+
 app.get("/users/me", async (c) => {
   try {
     const fid = c.get("fid");
@@ -236,13 +342,11 @@ app.get("/chat/:characterId", async (c) => {
     console.log({ characterId });
     const pinata = getPinata(c);
 
-    const conversationFiles = await pinata.files.private
-      .list()
-      .keyvalues({
-        characterId,
-        conversation: "true",
-        fid: c.get("fid").toString(),
-      });
+    const conversationFiles = await pinata.files.private.list().keyvalues({
+      characterId,
+      conversation: "true",
+      fid: c.get("fid").toString(),
+    });
 
     if (!conversationFiles.files || conversationFiles.files.length === 0) {
       return c.json({ messages: [] }, 200);
@@ -361,10 +465,74 @@ app.post("/storage/chat/:characterId", async (c) => {
 
 app.post("/solve", async (c) => {
   try {
+    //  Get case info
+    const supabase = getSupabase(c);
+
+    let { data: episodes, error } = await supabase
+      .from("episodes")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Supabase error: ", error);
+      throw error;
+    }
+
+    const episode = episodes && episodes[0] ? episodes[0] : null;
+
+    if (episode) {
+      //  Check if duration has passed
+      const createdAt = new Date(episode.created_at);
+
+      console.log("Created at:", createdAt.toISOString());
+
+      // Convert duration from days to milliseconds
+      // This is likely the issue - we need to convert based on what your duration represents
+      const durationInMs = episode.duration * 24 * 60 * 60 * 1000; // Duration in days to ms
+
+      // Add the duration to the created_at timestamp
+      const expirationTime = new Date(createdAt.getTime() + durationInMs);
+
+      console.log("Expiration time:", expirationTime.toISOString());
+
+      // Get current time
+      const currentTime = new Date();
+      console.log("Current time:", currentTime.toISOString());
+
+      if (currentTime > expirationTime) {
+        return c.json({ message: "The episode has ended" }, 400);
+      }
+    } else {
+      return c.json({ message: "No episode found" }, 400);
+    }
+
     const { userSolution } = await c.req.json();
 
     const fid = c.get("fid");
     const address = c.get("address");
+
+    //  Check if the user has attempted multiple solutions
+    const caseNumber = episode.case_number;
+
+    let { data: solution_attempts, error: solutionError } = await supabase
+      .from("solution_attempts")
+      .select("*")
+      .eq("fid", fid);
+
+    if (solutionError) {
+      console.log("Supabase solution error", solutionError);
+    }
+
+    const solutionAttempts = solution_attempts?.length || 0;
+
+    if (solutionAttempts > 1) {
+      return c.json(
+        { message: "You've already tried to solve this case two times" },
+        401
+      );
+    }
+
+    //  Check for payment onchain if solution attempts is equal to 1 before allowing attempt
 
     const pinata = getPinata(c);
     const solutionFileDetails = await pinata.files.private
@@ -402,6 +570,19 @@ app.post("/solve", async (c) => {
       }
     }
 
+    //  Write solution attempt
+
+    const { data: solutionWriteData, error: solutionWriteError } =
+      await supabase
+        .from("solution_attempts")
+        .insert([{ fid: fid, case_number: caseNumber }])
+        .select();
+
+    if (solutionWriteError) {
+      console.log("Error writing to supabase solution attempt: ", error);
+      throw error;
+    }
+
     if (
       scores.total < 0.8 ||
       scores.victims < 0.8 ||
@@ -430,15 +611,11 @@ app.post("/solve", async (c) => {
       );
     }
 
-    //  Update smart contract
-    const result = await gameOver(c, address);
-    console.log("Winner contract tx result: ", result);
-
     return c.json(
       {
         data: {
           status: "right",
-          message: "Congrats! You've solved the crime. You just won the pot!",
+          message: "Congrats! You've solved the crime. Let's see how others do!",
         },
       },
       200
@@ -489,6 +666,21 @@ const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 console.log(`Server is running on port ${port}`);
 
 initEventListeners(env);
+
+cron.schedule('0 * * * *', async () => {
+  try {
+    const over = await isCaseOver(env);
+    if(over) {
+      const c: any = {
+        env
+      }
+      await gameOver(c);      
+    }
+  } catch (error) {
+    console.log("Cron error");
+    console.log(error);
+  }
+});
 
 serve({
   fetch: app.fetch,
