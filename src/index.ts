@@ -52,6 +52,7 @@ const env: Bindings = {
   CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS || "",
   CLAUDE_API_KEY: process.env.CLAUDE_API_KEY || "",
   PRIVATE_KEY: process.env.PRIVATE_KEY || "",
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || ""
 };
 
 export type Character = {
