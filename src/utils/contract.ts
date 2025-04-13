@@ -159,6 +159,8 @@ export const setCaseInfo = async (c: Context, ipfsString: string) => {
 
 export const hasPlayerDeposited = async (c: Context, address: string) => {
   try {
+    console.log("Checking deposit status...");
+
     const provider = new ethers.JsonRpcProvider(c.env.RPC_URL);
     const contract = new ethers.Contract(c.env.CONTRACT_ADDRESS, abi, provider);
 
@@ -182,10 +184,14 @@ export const hasPlayerDeposited = async (c: Context, address: string) => {
 
     const caseNumber = episode.case_number;
 
+    console.log({address, caseNumber});
+
     const depositStatus = await contract.checkPlayerDepositStatus(
       caseNumber,
       address
     );
+
+    console.log("Contract result: ", depositStatus);
 
     return depositStatus;
   } catch (error) {
