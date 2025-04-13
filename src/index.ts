@@ -104,7 +104,7 @@ app.use("*", async (c, next) => {
 
       const { data, success, fid } = await appClient.verifySignInMessage({
         nonce: nonce,
-        domain: "https://5f84-66-68-201-142.ngrok-free.app",
+        domain: "parallax.cool",
         message: message,
         signature: signature,
       });
