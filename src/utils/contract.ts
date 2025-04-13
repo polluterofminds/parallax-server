@@ -37,16 +37,21 @@ export function initEventListeners(env: Bindings) {
         );
         const user = await getUserByVerifiedAddress(c, player);
         const userInfo = user[player];
-        const username = userInfo.username;
+        const username = userInfo?.username;
         console.log("New player joined: " + username);
         //  Get all active players
-        // await sendNotificationsToAllPlayers(
-        //   c,
-        //   "A new detecive has joined the investigation!",
-        //   `${username} has joined!`
-        // );
+        await sendNotificationsToAllPlayers(
+          c,
+          "A new detecive has joined the investigation!",
+          `${username} has joined!`
+        );
       } catch (error) {
         console.log(`PlayerDeposited error: `, error);
+        await sendNotificationsToAllPlayers(
+          c,
+          "A new detecive has joined the investigation!",
+          `A little more competition has arrived. Get to work solving the crime!`
+        );
       }
     }
   );
@@ -57,11 +62,11 @@ export function initEventListeners(env: Bindings) {
     if (statusMap[status] === "Active") {
       console.log("New case started!");
       //  Send notification that the investigation has begun
-      // await sendNotificationsToAllPlayers(
-      //   c,
-      //   "A new case has started!",
-      //   `Join or begin your investigation now!`
-      // );
+      await sendNotificationsToAllPlayers(
+        c,
+        "A new case has started!",
+        `Join or begin your investigation now!`
+      );
     }
     console.log(
       `Case Status Changed: Case ${caseNumber} status is now ${statusMap[status]}`
@@ -76,11 +81,11 @@ export function initEventListeners(env: Bindings) {
       } with prize ${ethers.formatUnits(prize, 6)} USDC`
     );
 
-    // await sendNotificationsToAllPlayers(
-    //   c,
-    //   "The case is over!",
-    //   "Winnings will be dispersed to all who solved the case."
-    // );
+    await sendNotificationsToAllPlayers(
+      c,
+      "The case is over!",
+      "Winnings will be dispersed to all who solved the case."
+    );
     console.log("Creating new case");
     await createNewCase(c);
   });
@@ -129,6 +134,7 @@ export const gameOver = async (c: Context) => {
     await createNewCase(c);
     return tx.hash;
   } catch (error) {
+    console.log("Game over error")
     console.log(error);
     throw error;
   }

@@ -104,7 +104,7 @@ app.use("*", async (c, next) => {
 
       const { data, success, fid } = await appClient.verifySignInMessage({
         nonce: nonce,
-        domain: "parallax.cool",
+        domain: "https://5f84-66-68-201-142.ngrok-free.app",
         message: message,
         signature: signature,
       });
@@ -225,7 +225,7 @@ app.get("/deposit-status", async (c) => {
     // console.log(user);
 
     const depositStatus = await hasPlayerDeposited(c, address);
-    console.log(depositStatus);
+    console.log({depositStatus});
     return c.json({ data: depositStatus });
   } catch (error) {
     console.log(error);
