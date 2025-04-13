@@ -109,8 +109,6 @@ app.use("*", async (c, next) => {
         signature: signature,
       });
 
-      console.log(data);
-
       if (!success) {
         return c.json({ message: "Unauthorized" }, 401);
       }
