@@ -37,7 +37,9 @@ export function initEventListeners(env: Bindings) {
         );
         const user = await getUserByVerifiedAddress(c, player);
         const userInfo = user[player];
-        const username = userInfo?.username;
+        console.log("Neynar user info: ")
+        console.log(userInfo);
+        const username = userInfo && userInfo[0] ? userInfo[0].username : "Someone new";
         console.log("New player joined: " + username);
         //  Get all active players
         await sendNotificationsToAllPlayers(
