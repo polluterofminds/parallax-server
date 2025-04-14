@@ -16,3 +16,9 @@ export type FrameNotificationDetails = {
     url: string;
     token: string;
 }
+
+export type CrimeDoc = {
+  victims: string;
+  criminal: string;
+  motive: string;
+}

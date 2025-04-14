@@ -5,7 +5,6 @@ import {
   MEMORIES_GROUP_ID,
 } from "./storage";
 import {
-  analyzeCrimeAndDistributeInformation,
   generateCrime,
   generateCustomBackstory,
   generateKillerMemory,
