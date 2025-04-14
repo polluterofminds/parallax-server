@@ -3,6 +3,7 @@ import { worldDescription } from "./worldbuilding";
 import { faker } from "@faker-js/faker";
 import { Character } from "..";
 import dotenv from "dotenv";
+import { Context } from "hono";
 dotenv.config();
 
 const claudeClient = new OpenAI({
@@ -215,133 +216,6 @@ Please return the following information in JSON format:
   return completion.choices[0].message.content;
 };
 
-export const analyzeCrimeAndDistributeInformation = async (
-  crime: string,
-  characters: Character[]
-) => {
-  // Step 1: Extract key information from the crime
-  const crimeAnalysis = await extractCrimeElements(crime);
-  console.log({crimeAnalysis});
-  // Step 2: Create clue distribution based on crime elements
-  const clueDistribution = generateClueDistribution(crimeAnalysis, characters);
-  console.log({clueDistribution});
-  // Step 3: Generate memories for each character based on their assigned clues
-  const characterMemories = await generateCharacterMemories(crime, characters, clueDistribution);
-  
-  return {
-    crimeAnalysis,
-    clueDistribution,
-    characterMemories
-  };
-};
-
-// Function to extract key elements from the crime description
-const extractCrimeElements = async (crime: string) => {
-  // This would be an AI call to analyze the crime text
-  const analysisPrompt = `
-    You are analyzing a crime for a mystery game. Extract the following key elements:
-    
-    1. VICTIM: Who was killed or harmed?
-    2. PERPETRATOR: Who committed the crime?
-    3. METHOD: How exactly was the crime committed? What was the weapon or means?
-    4. MOTIVE: Why was the crime committed? What was the reason?
-    5. LOCATION: Where did the crime take place?
-    6. TIMELINE: When did key events happen?
-    7. EVIDENCE: What physical or digital evidence might exist?
-    8. WITNESSES: Who might have seen or heard something related to the crime?
-    9. RELATIONSHIPS: What relationships existed between involved parties?
-    10. TECHNICAL_DETAILS: What specialized knowledge is relevant to the crime?
-    
-    For each element, provide 3 specific details that could be distributed among witnesses.
-    Format your response as a structured JSON object with these categories as keys.
-    
-    Here is the crime to analyze: ${crime}
-  `;
-  
-  const completion = await claudeClient.chat.completions.create({
-    model: model,
-    messages: [      
-      {
-        role: "user",
-        content: analysisPrompt,
-      },
-    ],
-    response_format: { type: "json_object" }
-  });
-  
-  // Parse the JSON response
-  const analysisResult = JSON.parse(completion.choices[0].message.content || "{}");
-  
-  return analysisResult;
-};
-
-// Function to distribute clues among characters
-const generateClueDistribution = (
-  crimeAnalysis: any,
-  characters: Character[]
-) => {
-  const distribution = [];
-  
-  // These are our clue categories from the crime analysis
-  const clueCategories = Object.keys(crimeAnalysis);
-  
-  // Each character will get 2-3 clues from different categories
-  for (let i = 0; i < characters.length; i++) {
-    const character = characters[i];
-    const characterClues = [];
-    
-    // Determine how many clues this character gets (2-3)
-    const numClues = Math.floor(Math.random() * 2) + 2; // 2-3 clues
-    
-    // Select clue categories for this character
-    // We'll cycle through categories to ensure even distribution
-    for (let j = 0; j < numClues; j++) {
-      // Select a category based on character index and clue number
-      // This algorithm ensures good distribution of clue types
-      const categoryIndex = (i + j * 3) % clueCategories.length;
-      const category = clueCategories[categoryIndex];
-      
-      // Select a specific clue from this category
-      // Use the character index to determine which detail from the category
-      const clueIndex = (i + j) % 3; // Each category has 3 details
-      const clue = crimeAnalysis[category][clueIndex];
-      
-      // Determine if this should be a lying clue
-      // More sophisticated lie distribution:
-      // 1. Character at index 3 lies about METHOD (how)
-      // 2. Character at index 6 lies about MOTIVE (why)
-      // 3. Character at index 8 lies about EVIDENCE
-      // 4. For other characters, one in three chance of lying about secondary clues
-      let isLying = false;
-      
-      if (
-        (i === 3 && category === "METHOD") ||
-        (i === 6 && category === "MOTIVE") ||
-        (i === 8 && category === "EVIDENCE")
-      ) {
-        isLying = true;
-      } 
-      // Secondary clues (not critical path clues) have a chance of being lies
-      else if (j > 0 && Math.random() < 0.3) {
-        isLying = true;
-      }
-      
-      characterClues.push({
-        category,
-        clue,
-        isLying
-      });
-    }
-    
-    distribution.push({
-      character: character.characterName,
-      clues: characterClues
-    });
-  }
-  
-  return distribution;
-};
-
 // Function to generate memories for each character based on their assigned clues
 const generateCharacterMemories = async (
   crime: string,
@@ -528,3 +402,114 @@ export const verifyMotive = async (motive: string, crimeMotive: string) => {
 
   return completion.choices[0].message.content;
 };
+
+export const generateKillerMemory = async (character: Character, killer: string, publicCrime: string) => {
+  const memoryPrompt = `
+        You are ${character.characterName}'s MEMORY. Character details: ${character.backstory}
+
+        Given the following crime, generate a specific memory that plausibly points to the killer: ${killer}
+
+        Make sure you use the killer's full name in the memory.
+
+        MEMORY GUIDELINES:
+        1. SENSORY: Include specific sensory details (what you saw, heard, smelled, etc.)
+        2. CONTEXTUAL: Include when and where this memory took place
+        3. EMOTIONAL: Show your character's reaction to what they know
+        4. INDIRECT: The information should be presented naturally, not as an explicit statement
+        5. CONNECTED: Reference other characters or events when appropriate
+        6. PARTIAL: This is just one piece of the puzzle - don't reveal everything
+        7. AUTHENTIC: Match your character's vocabulary, perspective, and knowledge level
+        8. SUCCINCT: Keep the memory under 1500 characters     
+        9. TIME APPROPRIATE: Try not to reference specific years or dates  
+
+        Respond with a vivid, detailed recollection that feels like a genuine human memory. No preamble or explanation.
+
+        Here is the crime: ${publicCrime}
+      `;
+      
+      const completion = await claudeClient.chat.completions.create({
+        model: model,
+        messages: [      
+          {
+            role: "user",
+            content: memoryPrompt,
+          },
+        ],
+      });
+
+      return completion.choices[0].message.content;
+}
+
+export const generateMotiveMemory = async (character: Character, motive: string, publicCrime: string) => {
+  const memoryPrompt = `
+        You are ${character.characterName}'s MEMORY. Character details: ${character.backstory}
+
+        Given the following crime, generate a specific memory that plausibly explains the following motive: ${motive}.
+
+        Don't try to reveal the murderer, but explain why the murder might have been commited based on the motive provided here.
+
+        MEMORY GUIDELINES:
+        1. SENSORY: Include specific sensory details (what you saw, heard, smelled, etc.)
+        2. CONTEXTUAL: Include when and where this memory took place
+        3. EMOTIONAL: Show your character's reaction to what they witnessed
+        4. INDIRECT: The information should be presented naturally, not as an explicit statement
+        5. CONNECTED: Reference other characters or events when appropriate
+        6. PARTIAL: This is just one piece of the puzzle - don't reveal everything
+        7. AUTHENTIC: Match your character's vocabulary, perspective, and knowledge level
+        8. SUCCINCT: Keep the memory under 1500 characters       
+        9. TIME APPROPRIATE: Try not to reference specific years or dates.
+
+        Respond with a vivid, detailed recollection that feels like a genuine human memory. No preamble or explanation.
+
+        Here is the crime: ${publicCrime}
+      `;
+      
+      const completion = await claudeClient.chat.completions.create({
+        model: model,
+        messages: [      
+          {
+            role: "user",
+            content: memoryPrompt,
+          },
+        ],
+      });
+
+      return completion.choices[0].message.content;
+}
+
+export const generateVagueMemory = async (character: Character, publicCrime: string) => {
+  const memoryPrompt = `
+        You are ${character.characterName}'s MEMORY. Character details: ${character.backstory}
+
+        Given the following crime, generate a vague memory that might plausibly be tied to the crime.
+
+        Feel free to suggest suspects, but make it clear that you aren't sure.
+
+        MEMORY GUIDELINES:
+        1. SENSORY: Include specific sensory details (what you saw, heard, smelled, etc.)
+        2. CONTEXTUAL: Include when and where this memory took place
+        3. EMOTIONAL: Show your character's reaction to what they know
+        4. INDIRECT: The information should be presented naturally, not as an explicit statement
+        5. CONNECTED: Reference other characters or events when appropriate
+        6. PARTIAL: This is just one piece of the puzzle - don't reveal everything
+        7. AUTHENTIC: Match your character's vocabulary, perspective, and knowledge level
+        8. SUCCINCT: Keep the memory under 1500 characters       
+        9. TIME APPROPRIATE: Try not to reference specific years or dates.
+
+        Respond with a vivid, detailed recollection that feels like a genuine human memory. No preamble or explanation.
+
+        Here is the crime: ${publicCrime}
+      `;
+      
+      const completion = await claudeClient.chat.completions.create({
+        model: model,
+        messages: [      
+          {
+            role: "user",
+            content: memoryPrompt,
+          },
+        ],
+      });
+
+      return completion.choices[0].message.content;
+}

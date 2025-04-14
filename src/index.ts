@@ -706,7 +706,9 @@ initEventListeners(env);
 
 cron.schedule('0 * * * *', async () => {
   try {
+    console.log("Checking if case is over...")
     const over = await isCaseOver(env);
+    console.log("Case over? ", over);
     if(over) {
       const c: any = {
         env
