@@ -166,18 +166,23 @@ export const giveCharactersMemories = async (
       randomIndex2 = Math.floor(Math.random() * characters.length);
     } while (randomIndex2 === randomIndex);
 
+    let randomIndex3: number;
+    do {
+      randomIndex3 = Math.floor(Math.random() * characters.length);
+    } while (randomIndex3 === randomIndex);
+
     let currentIndex = 0;
     for(const character of characters) {
       let memory = ""
       try {
-        if((currentIndex === randomIndex) || (currentIndex === randomIndex2)) {
+        if((currentIndex === randomIndex) || (currentIndex === randomIndex2) || currentIndex === randomIndex2) {
           //  This person knows who the killer is
           memory = await generateKillerMemory(character, crimeDoc.criminal, publicCrime) || ""
           console.log("KILLER MEMORY:")
           console.log(memory);          
         } else {
           //  Info about the motive, the scene, weapons, etc
-          const memoryTypes = ["motive", "suspects", "rumors"];
+          const memoryTypes = ["motive", "rumors"];
           const randomIndex = Math.floor(Math.random() * memoryTypes.length);
           // Get the random memory type
           const randomMemoryType = memoryTypes[randomIndex];
@@ -212,7 +217,7 @@ export const giveCharactersMemories = async (
         await pinata.upload.private
           .file(file)
           .group(MEMORIES_GROUP_ID)
-          .vectorize();
+          // .vectorize();
 
         console.log(`Saved memory for ${character.characterName}`);
         currentIndex++;
@@ -235,7 +240,7 @@ export const createNewCase = async (c: Context) => {
     const pinata = getPinata(c);
     const supabase = getSupabase(c);
 
-    console.log("Removing old data...");
+    // console.log("Removing old data...");
     await removeOldCaseData(c);
 
     //  NOTE: the commented code below is for situations when we need to regenerate memories for existing characters.
@@ -258,6 +263,8 @@ export const createNewCase = async (c: Context) => {
     // const solution = await pinata.gateways.private.get(solutionFiles.files[0].cid);
     // const parsed: any = solution.data;
     // console.log(parsed);
+
+    //  The code below is for production use
     const characters = await generateCharacters(c);
 
     //  Create the secret

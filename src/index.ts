@@ -104,7 +104,7 @@ app.use("*", async (c, next) => {
 
       const { data, success, fid } = await appClient.verifySignInMessage({
         nonce: nonce,
-        domain: "parallax.cool",
+        domain: "48d7-66-68-201-142.ngrok-free.app",
         message: message,
         signature: signature,
       });
@@ -414,40 +414,13 @@ app.post("/chat", async (c) => {
     }
     const rawData: any = await pinata.gateways.public.get(file.cid);
     const characterDetails: Character = rawData.data;
-    console.log({
-      memory: `${characterDetails?.characterName || ""} - ${
-        messages[messages.length - 1].content
-      }`,
-    });
-    // Find nearest memory/memories
-    let matches: any[] = []
-    try {
-      const nearest: any = await pinata.files.private.queryVectors({
-        groupId: MEMORIES_GROUP_ID,
-        query: `${characterDetails?.characterName || ""} - ${
-          messages[messages.length - 1].content
-        }`,
-      });
-  
-      console.log({nearest});
-      matches = nearest.matches.filter(
-        (m: VectorQueryMatch) => m.score >= 0.5
-      );
-      
-    } catch (error) {
-      console.log("Error getting memory matches...")
-      console.log(error);
+    
+    let memoryToUse = ""
+    const files = await pinata.files.private.list().name(`${characterDetails.characterName}-memory`)    
+    if(files.files && files.files[0]) {
+      const rawMemory = await pinata.gateways.private.get(files.files[0].cid);
+      memoryToUse = rawMemory.data as string;
     }
-    console.log("Matches:")
-    console.log(matches);
-    let memoryToUse = "";
-    if (matches && matches.length > 0) {
-      const data = await pinata.gateways.private.get(matches[0].cid);
-      const raw: any = data.data;
-      console.log(raw)
-      memoryToUse = raw.includes(characterDetails.characterName) ? raw : "";
-    }
-    console.log(memoryToUse.length);
 
     // Set up streaming response
     c.header("Content-Type", "text/event-stream");
