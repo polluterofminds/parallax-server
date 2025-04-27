@@ -20,6 +20,7 @@
     "node-cron": "^3.0.3",
     "openai": "^4.89.1",
     "pinata": "^2.1.0",
+    "rss-parser": "^3.13.0",
     "short-uuid": "^5.2.0",
     "viem": "^2.24.3"
   },
